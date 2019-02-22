@@ -2,6 +2,13 @@
 
 \usepackage[math]{kurier}
 \usepackage[sc]{mathpazo}
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    filecolor=magenta,      
+    urlcolor=cyan,
+}
 \renewcommand{\sfdefault}{kurier}
 
 \usepackage[boxruled]{algorithm2e}
@@ -27,6 +34,8 @@
 \setlength{\headsep}{0.75 in}
 \setlength{\parindent}{0 in}
 \setlength{\parskip}{0.1 in}
+\usepackage{algorithm}
+\usepackage[noend]{algpseudocode}
 
 
 \newcounter{lecnum}
@@ -70,13 +79,19 @@
 
 \section{Introduction}
 
-The first part of this lecture covers filtering techniques including parametric and non-parametric filters. The parametric filters include the Kalman Filter, the Extended Kalman Filter and the Unscented Kalman Filter, while the non-parametric filters covered are the histogram and particle filters. The second part of this lecture is a brief introduction to robot localization.
+Last lecture, we discussed the Bayes filter to continuously update our belief on something, for example, a robot's location. However, because the Bayes filter requires iterating over a continuous variable, it is generally impracticable due to computational limits.
+
+\par
+The first part of this lecture covers filtering techniques which are based on the Bayes filter but which make certain approximations which render these filters practically implementable, which the Bayes filter is not. We discuss two main classes of filter: parametric filters, and non-parametric filters. {\it Parametric} filters generally begin by restricting the belief of the Bayes filter to a particular distribution, such as a Gaussian, and proceeding to estimate the {\it parameters} determining this specific distribution, such as the mean and variance in the case of Gaussian. In {\it non-parametric} filters, on the other hand, we make no restrictive assumption as to the distribution of the belief; rather, we discretize the belief into ``particles," thus replacing the continuous variable in the Bayes filter iteration with a discrete variable and thus making the iteration practicable. Thus while both parametric and non-parametric filters are based on the Bayes filter, they make completely orthogonal simplifying assumptions, and thus we should expect the error source for each to be different as well: for parametric filters, errors will arise from our initial restriction on the possible belief, for non-parametric filters, errors will arise due to the discretization.
+
+\par
+The second part of this lecture is a brief introduction to robot localization.
 
 \section{Parametric Filters}
 Parametric filters are a family of state estimators that assume the form of a robot's belief distribution and calculate the parameters to fully define that distribution based on the latest information. In particular, Gaussian filters are an important group of parametric filters that assume the belief distribution is a multivariate normal distribution. The Kalman filter and its variants belong to this group of parametric filters.
 
 %\FloatBarrier
-\begin{figure}[b]
+\begin{figure}[h]
 \centering
 \begin{subfigure}{.5\textwidth}
   \centering
@@ -97,24 +112,75 @@ Parametric filters are a family of state estimators that assume the form of a ro
 
 \subsection{Kalman Filter}
 \subsubsection{Setup}
-A Kalman filter $K_t$ uses a model of the system dynamics, known control inputs to a system, and noisy measurements to estimate the robot's state. The algorithm calculates weights on the state predicted from the measurements and the state predicted by the model. The key idea behind Kalman filters is that we assume that each belief function (the expected state) follows a multivariate normal distribution (Gaussian distribution), illustrated in Figure \ref{fig:Gaussians}. However, instead of propagating the probability density function itself, we choose to propagate forward the project state (mean) and covariance.
+The Kalman filter uses a model of the system dynamics, known control inputs to a system, and noisy measurements to estimate the robot's state. The algorithm calculates a belief on the state predicted from the model and then updates this belief to be in closer accord with the actual observations / measurements. Thus the belief output by a Kalman filter is informed both by our prior belief (past observations / assumptions) and our observations (current noisy measurements).
 
 \par
-In general, the linearity assumption does not hold (e.g., square root in Euclidean distance calculation) when modeling the robot. But we make several assumptions when using Kalman filters that simplify the problem.
-First we assume a linear dynamics model of the robot:
-\begin{equation}
-x_t = A_t x_{t-1} + B_t u_t + \epsilon_{t}
-\end{equation}
-where $\epsilon_{t}$ is the independent process noise with variance $R_t$. Notice here that the probability generative model now is also Gaussian because the Gaussian of a linear equation is still Gaussian. Second we assume that the measurement model is also linear
-\begin{equation}
-z_t = C_t x_t + \delta_t
-\end{equation}
-where $\delta_t$ is the independent measurement noise with variance $Q_t$. This ensures the measurement probability is also a Gaussian. The third and last assumption is that the initial belief function is also Gaussian in the form of \begin{equation}
-bel(x_0) = \mathtt{det}(2\pi\Sigma_0)^{-\frac{1}{2}}\mathtt{exp}(-\frac{1}{2}(x_0-\mu_0)\Sigma_0^{-1}(x_0-\mu_0)^{T})
-\end{equation}
-such that our posterior $bel$ functions will also follow Gaussian distribution.
+The key idea behind Kalman filters is that we assume that each belief function (the expected state) follows a multivariate normal distribution (Gaussian distribution), illustrated in Figure \ref{fig:Gaussians}. While we could in theory choose another distribution, Gaussians are convenient for two reasons: $(1)$ assuming the Gaussian is computationally convenient as it produces a closed form solution for updating the Kalman filter, and $(2)$ the Law of Large Numbers suggests that assuming a Gaussian distribution is probably reasonable in most cases. There are instances, however, where this assumption is poor and leads to complications: for example, when a robot is first turned on and has no idea where it is, the uni-modal Gaussian assumption is clearly poor..
+
+%However, instead of propagating the probability density function itself, we choose to propagate forward the project state (mean) and covariance.
+
+\par
+Before proceeding into the details of the Kalman filter, let us briefly discuss the assumptions we will make to simplify our analysis. The first, as previously mentioned, is that our belief state is Gaussian. We will use three properties of Gaussian random variables.
+\begin{enumerate}
+    \item If $X \sim \mathcal{N}(\mu, \Sigma)$, then
+    \[
+    Y = AX + b \sim \mathcal{N}(A\mu+b, A\Sigma A^T).
+    \]
+    \item If $X_i \sim \mathcal{N}(\mu_i, \Sigma_i)$ for $i = 1,2$, and $X_1, X_2$ are independent, then
+    \[
+    Y = X_1 + X_2 \sim \mathcal{N}(\mu_1 + \mu_2, \Sigma_1 + \Sigma_2).
+    \]
+    \item The product of Gaussian pdf's is also a Gaussian.
+\end{enumerate}
+
+\par
+In addition to our Gaussian assumption, we will make three further assumptions on our system itself.
+\begin{enumerate}
+    \item
+    We assume that our robot's state evolves via a linear dynamical system. That is, at time $t$, the state $x_t$ is given by
+    \begin{align*}
+    x_t = A_t x_{t-1} + B_t u_t + \epsilon_{t},
+    \end{align*}
+    where $x_{t-1}$ is the previous state, $u_t$ is the most recent control input, and $\epsilon_{t}$ is the independent process noise with distribution $\mathcal{N}(0,R_t)$.
+    \item[] {\bf Consequence:}
+    Given a particular $x_{t-1},u_t$ and assuming that $\epsilon_t$ is Gaussian (a very standard assumption for noise), $x_t$ is also Gaussian. Specifically, using the properties of Gaussians given above, $$x_t \sim \mathcal{N}(A_t x_{t-1} + B_t u_t, R_t).$$
+    
+    \item
+    We assume that the measurement model is also linear. That is, if we attempt to measure the state of our robot at time $t$ and true state $x_t$, our measurement $z_t$ is given by
+    \begin{align*}
+    z_t = C_t x_t + \delta_t,
+    \end{align*}
+    where $\delta_t$ is the independent measurement noise with distribution $\mathcal{N}(0,Q_t)$
+    \item[] {\bf Consequence:}
+    This ensures the measurement probability is also a Gaussian. Specifically, $$z_t \sim \mathcal{N}(C_t x_t, Q_t).$$
+    
+    \item
+    We assume that the initial belief function is also Gaussian in the form of \begin{align*}
+    bel(x_0) = \mathtt{det}(2\pi\Sigma_0)^{-\frac{1}{2}}\mathtt{exp}(-\frac{1}{2}(x_0-\mu_0)\Sigma_0^{-1}(x_0-\mu_0)^{T}).
+    \end{align*}
+    \item[] {\bf Consequence:} 
+    This assumption, in conjunction with the prior two, ensures that all posterior $bel$ functions will also follow Gaussian distribution. As mentioned before, this assumption is sometimes quite poor; however, it drastically reduces the computational complexity of the problem.
+\end{enumerate}
+
+Note that, by the union of these three assumption, all belief states throughout time will follow a Gaussian distribution. Since Gaussian distributions are uniquely determined by the first two moments (that is, the mean and the variance), this further means that we need only propagate the mean and the variance (or, in the multivariate case, the covariance matrix) through time rather than a full expression for the pdf.
+
 \subsubsection{Algorithm}
-First we make a prediction of the state and project mean and covariance ahead,
+We will now consider the actual algorithm which implements the Kalman filter. As with the more general Bayes filter, the Kalman filter can be broken down into two steps: a {\it prediction} step based on the prior belief and a {\it correction} step based on the most recent measurement (See Fig \ref{fig:KF_pred_corr}).
+
+%\FloatBarrier
+\begin{figure}[h]
+\centering
+  \includegraphics[width=.9\linewidth]{KF_pred_corr.png}
+  \caption{Prediction / Correction loop in Kalman Filter}
+\label{fig:KF_pred_corr}
+\end{figure}
+%\FloatBarrier
+
+\par
+Note that, by assumptions 1 and 3 given above, we our previous belief state $bel(x_{t-1})$ is known to be Gaussian, and as our process noise $\epsilon(t)$ is also assumed to be Gaussian, $bel(x_t)$ will be Gaussian. Consequently, we need only be provided with $(\mu_{t-1}, \Sigma_{t-1})$ instead of the complete $bel(x_{t-1})$, and we need only estimate $(\mu_{t}, \Sigma_{t})$ instead of the complete $bel(x_{t})$.
+
+\par
+First we make a prediction of the state, projecting mean and covariance ahead based on our previous belief state $bel(x_{t-1})$ and our most recent control input $u_t$.
 \begin{align}
 \begin{split}
 \bar{\mu}_t &= A_t\mu_{t-1}+B_t u_t \\
@@ -122,11 +188,11 @@ First we make a prediction of the state and project mean and covariance ahead,
 \end{split}
 \label{LinDyn}
 \end{align}
-Then we need to correct the prediction with our measurement. First we compute the Kalman gain,
+Then we need to correct the prediction with our measurement -- that is, we adjust our predicted belief to be more in accord with our most recent observation / measurement $z_t$. First we compute the Kalman gain,
 \begin{equation}
-K_t = \bar{\Sigma}_{t}C_t^{T}(C_t\bar{\Sigma}_{t}C_t^{T}+Q_t)^{-1}
+K_t = \bar{\Sigma}_{t}C_t^{T}(C_t\bar{\Sigma}_{t}C_t^{T}+Q_t)^{-1}.
 \end{equation}
-Then we update our belief function
+At a high level, the Kalman gain can be thought of as the ratio of how much uncertainty we have in our prediction over how much uncertainty we have in our measurement. Having computed the Kalman gain, we update our belief function via a linear update.
 \begin{align}
 \begin{split}
 \mu_t &= \bar{\mu}_t + K_t(z_t-C_t\bar\mu_{t})\\
@@ -134,20 +200,31 @@ Then we update our belief function
 \end{split}
 \label{KF}
 \end{align}
-Repeat this process.
-A few iterations of this algorithm are depicted in Figure \ref{fig:KF_algorithm}.
+That is, we correct our belief by considering the difference between what we actually observed ($z_t$) and what we would have observed had our predicted belief been correct ($C_t\bar\mu_{t}$). As intuition would suggest, if $K_t$ is large, meaning that we have much more uncertainty in our prediction than in our measurement, our correction term is large; if $K_t$ small, meaning that we have much more uncertainty in our measurement than in our prediction, then our correction term is small.
 
-\SetKwInput{KwReturn}{Return}
+\par
+The correction to the covariance matrix is less obvious, but follows from similar logic.
+
+\par
+We then repeat this process. A few iterations of this algorithm are depicted in Figure \ref{fig:KF_algorithm}.
+
 \begin{algorithm}[H]
-\caption{Kalman Filter}
-	\KwData{$(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$}
-	\KwResult{$\left(\mu_t, \Sigma_t\right)$}
-	$	\bar{\mu}_t = A_t\mu_{t-1}+B_t u_t$\;
-	$	\bar{\Sigma}_t = A_t\Sigma_{t-1} A_t^{T} + R_t$\;
-	$ 	K_t = \bar{\Sigma}_{t}C_t^{T}(C_t\bar{\Sigma}_{t}C_t^{T}+Q_t)^{-1}$\;
-	$    \mu_t = \bar{\mu}_t K_t(z_t-C_t\bar\mu_{t})$\;
-	$   \Sigma_t = (I-C_t K_t)\bar{\Sigma}_t$\;
-	\KwReturn{$(\mu_t, \Sigma_t)$}
+\caption{Kalman Filter}\label{alg:KF}
+\begin{algorithmic}[1]
+    \State {\bf Data:} $(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$
+    \State {\bf Result: } $\left(\mu_t, \Sigma_t\right)$
+    \State $	\bar{\mu}_t = A_t\mu_{t-1}+B_t u_t$
+    \Comment{Predict mean}
+	\State $	\bar{\Sigma}_t = A_t\Sigma_{t-1} A_t^{T} + R_t$
+	\Comment{Predict covar}
+	\State $ 	K_t = \bar{\Sigma}_{t}C_t^{T}(C_t\bar{\Sigma}_{t}C_t^{T}+Q_t)^{-1}$
+	\Comment{Kalman gain}
+	\State $    \mu_t = \bar{\mu}_t K_t(z_t-C_t\bar\mu_{t})$
+	\Comment{Correct mean}
+	\State $   \Sigma_t = (I-C_t K_t)\bar{\Sigma}_t$
+	\Comment{Correct covar}
+	\State {\bf Return: } $\left(\mu_t, \Sigma_t\right)$
+\end{algorithmic}
 \end{algorithm}
 
 %\FloatBarrier
@@ -163,7 +240,7 @@ A few iterations of this algorithm are depicted in Figure \ref{fig:KF_algorithm}
 The following recursive update equation can be derived by applying Bayes rule to the posterior distribution:
 \begin{equation}
 p(x_t \mid z_{1:t}, u_{1:t}) = \eta p(z_t \mid x_t, z_{1:t-1}, u_{1:t})p(x_t \mid z_{1:t-1}, u_{1:t}).
-\end{equation} Noting that conditional independence gives the simplification
+\end{equation} Note that conditional independence gives the simplification
 \begin{equation}
 p(x_t \mid z_{1:t}, u_{1:t}) = \eta p(z_t \mid x_t)p(x_t \mid z_{1:t-1}, u_{1:t}). \label{predbel0}
 \end{equation}
@@ -193,9 +270,19 @@ for which the equations for $\mu_t$, and $\Sigma_t$ can be expressed as in \eqre
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \subsection{Extended Kalman Filter (EKF)}
 
-The Extended Kalman Filter (EKF) is a Kalman Filter that relaxes the linearity assumption of the models. Instead of trying to find the exact posterior solution, it seeks to compute a Gaussian approximation.  The belief distribution is passed through the filter and results in a non-Gaussian distribution. Then we find the best Gaussian fit to this resulting distribution.
+The Extended Kalman Filter (EKF) is a Kalman Filter that relaxes the linearity assumption of the models. Instead of trying to find the exact posterior solution, it seeks to compute a Gaussian approximation.  The belief distribution is passed through the filter and results in a non-Gaussian distribution. Then we find the best Gaussian fit to this resulting distribution. 
+
+In relaxing the linearity assumption to use the EKF, we now assume that the dynamics of the system are given by
+\begin{equation}
+    x_t = g(u_t,x_{t-1}) + \epsilon_{t}.
+\end{equation}
+Furthermore, the measurement model is now given by
+\begin{equation}
+    z_t = h(x_t) + \delta_{t}.
+\end{equation}
+
 \par
-The assumption in EKF is that we can use the first-order Taylor expansion to linearize $g$ and $h$ around the most likely state (e.g. the mean of the state), then pass beliefs through linearized models. For the dynamics equation, we propagate the state as $x_t = g(u_t, x_{t-1})$, with $g(u_t, x_{t-1})$ in the form of
+A key idea in EKF is that we can use the first-order Taylor expansion to linearize $g$ and $h$ around the most likely state (e.g. the mean of the state), then pass beliefs through linearized models. For the dynamics equation, we propagate the state as $x_t = g(u_t, x_{t-1})$, with $g(u_t, x_{t-1})$ in the form of
 \begin{equation}
 	g(u_t, x_{t-1}) \approx g(u_t, \mu_{t-1}) + J_g(u_t, \mu_{t-1})(x_{t-1}-\mu_{t-1})
 \end{equation}
@@ -254,22 +341,29 @@ Then we update our belief function
 \Sigma_t &= (I-K_t H_t)\bar{\Sigma}_t
 \end{split}
 \end{align}
-Repeat this process.
+We then repeat this process.
 
 \begin{algorithm}[H]
 \caption{Extended Kalman Filter}
-\KwData{$(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$}
-	\KwResult{$\left(\mu_t, \Sigma_t\right)$}
-	$	\bar{\mu}_t = g(u_t,\mu_{t-1})$\;
-	$	\bar{\Sigma}_t = G_t\Sigma_{t-1} G_t^{T} + R_t$\;
-	$ 	K_t = \bar{\Sigma}_{t}H_t^{T}(H_t\bar{\Sigma}_{t}H_t^{T}+Q_t)^{-1}$\;
-	$    \mu_t = \bar{\mu}_t+K_t(z_t-h(\mu_{t}))$\;
-	$   \Sigma_t = (I-K_t H_t)\bar{\Sigma}_t$\;
-	\KwReturn{$(\mu_t, \Sigma_t)$}
+\begin{algorithmic}[1]
+    \State {\bf Data: }$(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$
+	\State {\bf Result: }$\left(\mu_t, \Sigma_t\right)$
+	\State $	\bar{\mu}_t = g(u_t,\mu_{t-1})$\;
+	\Comment{Predict mean}
+	\State $	\bar{\Sigma}_t = G_t\Sigma_{t-1} G_t^{T} + R_t$\;
+	\Comment{Predict covar}
+	\State $ 	K_t = \bar{\Sigma}_{t}H_t^{T}(H_t\bar{\Sigma}_{t}H_t^{T}+Q_t)^{-1}$\;
+	\Comment{Kalman gain}
+	\State $    \mu_t = \bar{\mu}_t+K_t(z_t-h(\mu_{t}))$\;
+	\Comment{Correct mean}
+	\State $   \Sigma_t = (I-K_t H_t)\bar{\Sigma}_t$\;
+	\Comment{Correct covar}
+	\State {\bf Result: }$(\mu_t, \Sigma_t)$
+\end{algorithmic}
 \end{algorithm}
 
 \subsubsection{EKF Results}
-The accuracy of the linearity assumption in the EKF is strongly dependent on the variance. Linearizing around the mean is only valid for points that are near the mean. So if the variance is low, as in Figure \ref{fig:EKF_low_var}, the EKF provides an accurate estimate of the true state. If there is high variance in the prior distribution, as in Figure \ref{fig:EKF_high_var}, the EKF will propagate forward a poor estimate of a poor estimate, and can become very ineffective.
+The accuracy of the linearity assumption in the EKF is strongly dependent on the variance. Linearizing around the mean is only valid for points that are near the mean. So if the variance is low, as in Figure \ref{fig:EKF_low_var}, the EKF provides an accurate estimate of the true state. If there is high variance in the prior distribution, as in Figure \ref{fig:EKF_high_var}, the EKF will propagate forward a poor estimate of a poor estimate, and can become very ineffective. Advantages of EKF over other nonlinear variants of the Kalman filter include its relative computational efficiency.
 
 %\FloatBarrier
 \begin{figure}[H]
@@ -290,6 +384,28 @@ The accuracy of the linearity assumption in the EKF is strongly dependent on the
 \label{fig:EKF_variance}
 \end{figure}
 %\FloatBarrier
+\subsubsection{More on EKF}
+
+These following resources provide more insights into this topic.
+
+\href{http://www.negenborn.net/kal_loc/thesis.pdf}{Robot Localization and Kalman Filters} Rudy Negenborn.
+
+
+\href{https://link.springer.com/article/10.1007/s12046-017-0692-y}{Implementation of extended Kalman filter-based simultaneous
+localization and mapping: a point feature approach} Manigandan Nagarajan SanthanakrishnanE, John Bosco Balaguru RayappanRamkumar Kannan.
+
+
+Locating a two-wheel robot using extended kalman filter by Javad Zolghadr and Yuanli Cai. (This can be found at Google)
+
+
+\href{https://www.cse.sc.edu/~terejanu/files/tutorialEKF.pdf}{Extended Kalman Filter Tutorial} by Gabriel A. Terejanu, University at Buffalo
+
+\href{https://ags.cs.uni-kl.de/fileadmin/inf_ags/opt-ss12/lec10_opt.pdf}{Using the Kalman filter
+Extended Kalman filter} by Doz. G. Bleser and Prof. Stricker
+
+(Summary of extended kalman filter can be found in this one)
+
+
 
 
 \subsection{Unscented Kalman Filter (UKF)}
@@ -388,21 +504,35 @@ Then we can update the belief function:
 
 \begin{algorithm}[H]
 \caption{Unscented Kalman Filter}
-\KwData{$(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$}
-\KwResult{$\left(\mu_t, \Sigma_t\right)$}
-$ \mathcal{X}_{t-1} = \left(\mu_{t-1} \qquad \mu_{t-1} + \gamma \sqrt{\Sigma_{t-1}}\qquad \mu_{t-1} - \gamma \sqrt{\Sigma_{t-1}}\right)$ \;
-$\bar{\mathcal{X}}^*_t = g(u_t, \mathcal{X}_{t-1})$ \;
-$\bar{\mu}_t = \sum_{i=0}^{2n} w_m^{[i]}\bar{\mathcal{X}_t^*}^{[i]}$ \;
-$\bar{\Sigma}_t = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{X}_t^*}^{[i]} -\bar{\mu}_t\right)\left(\bar{\mathcal{X}_t^*}^{[i]} -\bar{\mu}_t\right)^T + R_t$ \;
-$ \bar{\mathcal{X}}_{t} = \left(\bar{\mu}_{t} \qquad \bar{\mu}_{t}  + \gamma \sqrt{\bar{\Sigma}_t}\qquad \bar{\mu}_{t}  - \gamma \sqrt{\bar{\Sigma}_t}\right)$ \;
-$\bar{\mathcal{Z}}_t = h(\bar{\mathcal{X}}_t)$\;
-$\hat{z}_t =  \sum_{i=0}^{2n} w_m^{[i]}\bar{\mathcal{Z}_t}^{[i]}$ \;
-$S_t = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)^T + Q_t$ \;
-$\bar{\Sigma}_t^{x,z} = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{X}_t}^{[i]} -\bar{\mu}_t\right)\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)^T$ \;
-$K_t = \bar{\Sigma}_t^{x,z}S_t^{-1}$ \;
-$ \mu_t = \bar{\mu}_t + K_t(z_t - \hat{z}_t)$ \;
-$\Sigma_t = \bar{\Sigma}_t  - K_t S_t K_t^T$ \;
-\KwReturn{$(\mu_t, \Sigma_t)$}
+\begin{algorithmic}[1]
+    \State {\bf Data: }$(\mu_{t-1}, \Sigma_{t-1}), u_t, z_t$
+    \State {\bf Result: }$\left(\mu_t, \Sigma_t\right)$
+    \State $ \mathcal{X}_{t-1} = \left(\mu_{t-1} \qquad \mu_{t-1} + \gamma \sqrt{\Sigma_{t-1}}\qquad \mu_{t-1} - \gamma \sqrt{\Sigma_{t-1}}\right)$ \;
+    \Comment{Form sigma points \eqref{UKFsigpts}}
+    \State $\bar{\mathcal{X}}^*_t = g(u_t, \mathcal{X}_{t-1})$ \;
+    \Comment{Propagate through dynamics}
+    \State $\bar{\mu}_t = \sum_{i=0}^{2n} w_m^{[i]}\bar{\mathcal{X}_t^*}^{[i]}$ \;
+    \Comment{Predict mean}
+    \State $\bar{\Sigma}_t = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{X}_t^*}^{[i]} -\bar{\mu}_t\right)\left(\bar{\mathcal{X}_t^*}^{[i]} -\bar{\mu}_t\right)^T + R_t$ \;
+    \Comment{Predict covar}
+    \State $ \bar{\mathcal{X}}_{t} = \left(\bar{\mu}_{t} \qquad \bar{\mu}_{t}  + \gamma \sqrt{\bar{\Sigma}_t}\qquad \bar{\mu}_{t}  - \gamma \sqrt{\bar{\Sigma}_t}\right)$ \;
+    \Comment{Predict sigma points}
+    \State $\bar{\mathcal{Z}}_t = h(\bar{\mathcal{X}}_t)$\;
+    \Comment{Propagate through nonlinear measurement}
+    \State $\hat{z}_t =  \sum_{i=0}^{2n} w_m^{[i]}\bar{\mathcal{Z}_t}^{[i]}$ \;
+    \Comment {Predicted observation}
+    \State $S_t = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)^T + Q_t$ \;
+    \Comment{Uncertainty}
+    \State $\bar{\Sigma}_t^{x,z} = \sum_{i=0}^{2n} w_c^{[i]}\left(\bar{\mathcal{X}_t}^{[i]} -\bar{\mu}_t\right)\left(\bar{\mathcal{Z}_t}^{[i]} -\hat{z}_t\right)^T$ \;
+    \Comment{Cross-covar}
+    \State $K_t = \bar{\Sigma}_t^{x,z}S_t^{-1}$ \;
+    \Comment{Kalman gain}
+    \State $ \mu_t = \bar{\mu}_t + K_t(z_t - \hat{z}_t)$ \;
+    \Comment{Correct mean}
+    \State $\Sigma_t = \bar{\Sigma}_t  - K_t S_t K_t^T$ \;
+    \Comment{Correct covar}
+    \State {\bf Return: }$(\mu_t, \Sigma_t)$
+\end{algorithmic}
 \label{UKF_ALG}
 \end{algorithm}
 
@@ -426,8 +556,7 @@ $\Sigma_t = \bar{\Sigma}_t  - K_t S_t K_t^T$ \;
 \label{fig:UKF_variance}
 \end{figure}
 %\FloatBarrier
-While the asymptotic complexities for the UKF and EKF algorithms are equivalent, the EKF is typically marginally faster than the UKF in practice. However, the UKF has the advantage if not requiring computation of Jacobians, which can sometimes pose an analytic challenge.
-The UKF is much less sensitive to variance than the EKF because it propagates forward the exact nonlinear motion and measurement processes. As Figure \ref{fig:UKF_variance} shows, the UKF and EKF perform very similarly with low variance, but the UKF outperforms the EKF with high variance.
+While the asymptotic complexities for the UKF and EKF algorithms are equivalent, the EKF is typically marginally faster than the UKF in practice. However, the UKF has the advantage if not requiring computation of Jacobians, which can sometimes pose an analytic challenge. The UKF is much less sensitive to variance than the EKF because it propagates forward the exact nonlinear motion and measurement processes. As Figure \ref{fig:UKF_variance} shows, the UKF and EKF perform very similarly with low variance, but the UKF outperforms the EKF with high variance.
 
 
 \section{Nonparametric Filters}
@@ -465,12 +594,16 @@ Finally, we execute a discrete Bayes' filter on the discretized probabilities to
 
 
 \subsection{Particle Filter}
-
-A particle filter approximates the posterior distribution with a finite number of particles, denoted as
+\subsubsection{Approximating with Particles}
+Particle filters differ from Kalman filters or any parametric filters in the sense that it does not assume any type of belief distribution. Instead, particle filters can approximate any PDF using a large numbers of "particles". To approximate a PDF with particles, particles are generated based on the relative likelihood of these samples directly. For example, given a random variable $X$ with PDF $Pr[X = 0] = 0.1$ and $Pr[X=1] = 0.9$, $10\%$ of the particles will have value 0 and $90\%$ of the particles will have value 1.
+\subsubsection{Particle Filter Algorithm}
+This intuition can be formally shown as the following: let a particle filter approximates the posterior distribution with a finite number of particles, denoted as
 \begin{equation}
 	\mathcal{X}_t = x_t^{[1]}, x_t^{[2]},..., x_t^{[M]}
 \end{equation}
-with each $x_t^{[k]}$ representing a hypothesis of what the true world state would be at time $t$. The denser the particles, the higher the probability of landing in a region. The algorithm operates iteratively: given $\mathcal{X}_{t-1}$, we construct the next particle set $\mathcal{X}_t$ by resampling $\mathcal{X}_{t-1}$ to correct the predicted belief function, incorporating our measurements into the calculation. This is done by computing the probability we observe a particular measurement conditional on the state, then drawing particles with replacement using these probabilities.
+with each $x_t^{[k]}$ representing a hypothesis of what the true world state would be at time $t$. The denser the particles, the higher the probability of landing in a region. 
+
+The algorithm operates iteratively: assuming we have $M$ particles, given $\mathcal{X}_{t-1}$, we construct the next particle set $\mathcal{X}_t$ by first construct a predicted particle set, then use the measurement result to correct the belief state. First, a predicted particle set is constructed by drawing samples from the current belief state $p(x_t| u_t, x^{[m]}_{t-1})$. Meanwhile, the probability we observe a particular measurement conditional on the state, $w^{[m]}_t$, is also calculated. Next, the correction step, often referred to as resampling with replacement, incorporates our measurements into the calculation. A corrected set of particles are generated by drawing a particle $i$ from the predicted particle set with probability proportional to $w^{[i]}_t$. 
 
 After resampling, particles are distributed as
 \begin{equation}
@@ -478,11 +611,14 @@ After resampling, particles are distributed as
 \end{equation}
 for $M \rightarrow \infty$. That is, in the limit, we recover the distribution of the true nonlinear filter. ($M \approx 1000$ achieves acceptable accuracy in practice). A few iterations of the particle filter algorithm for robot localization are shown in Figure \ref{fig:Particle_filter}.
 
+Note that after several resampling steps, particles will often collapsed into very few states. This situation is called particle deprivation. To correct this, we can inject $n$ random particles into the corrected particle set after each iteration. 
+
 \begin{algorithm}[H]
 \caption{Particle Filter}
 \KwData{$\mathcal{X}_{t-1}, u_t, z_t$}
 \KwResult{$\mathcal{X}_t$}
 $\bar{\mathcal{X}}_t = X_t = \emptyset$\;
+
 \For{$m=1$ \KwTo $M$}{
 sample $x_t^{[m]} \sim p(x_t \mid u_t, x_{t-1}^{[m]})$\;
 $w_t^{[m]} = p(z_t \mid x_t^{[m]})$\;
@@ -492,7 +628,7 @@ $\bar{\mathcal{X}}_t = \bar{\mathcal{X}}_t \cup \left(x_t^{[m]}, w_t^{[m]}\right
 draw $i$ with probability $\propto w_t^{[i]}$\;
 add $x_t^{[i]}$ to $\mathcal{X}_t$\;
 }
-\KwReturn{$\mathcal{X}_t$}
+{\bf Return: }$\mathcal{X}_t$
 \end{algorithm}
 
 %\FloatBarrier
@@ -505,15 +641,8 @@ add $x_t^{[i]}$ to $\mathcal{X}_t$\;
 %\FloatBarrier
 
 \section{Robot Localization}
-Localization is the process of determining the correspondence between a robot's placement and the environment's map coordinates. Like before, a control input $u_t$ gives rise to a robot state $x_t$, which produces measurements $z_t$. The distinction is that this time, the map $m$ influences our measurements and possibly control parameters as well. Different situations thus may call for different filters. This influence is shown in the updated Bayes network (Hidden Markov Model) for robot localization in Figure \ref{fig:HMM_with_map}. Similarly, the influence of the map (door locations) can be seen in the measurement model $p(z \mid x)$ in Figures \ref{fig:Histogram_belief}, \ref{fig:Particle_filter}b, and \ref{fig:Particle_filter}d.
-
-In position tracking, the initial pose of the robot is known with certainty. EKF works well for this problem because the belief distribution is concentrated (indeed, a point mass) at the mean. On the other hand, global localization assumes the initial pose is unknown, so nonparametric filters like histogram or particle filters are preferable. Finally, a case of theoretical interest arises if the initial pose is unknown and the robot can be "kidnapped" during its operation, i.e., a discontinuity may exist in its state $\mathbf{x}(t)$. This models the situation when a filter diverges to a significant enough degree that it must be reset. Hence, our localization algorithm should be capable of restarting from a different point/orientation in space. The kidnapped robot localization problem is best addressed with nonparametric, multi-hypothesis filters.
-
-Environmental changes are another important consideration in mobile robot localization. A static environment assumes that the robot is the only object that moves. In contrast, a dynamic environmental model allows other objects, such as people, to move as well. This problem is usually addressed by augmenting the state vector or rejecting outliers.
-
-Passive localization assumes that a single module takes measurements, and the robot's motion is unrelated to its localization process. A more sophisticated approach is active localization, where the robot's movement is aimed (at least partly) toward improving its understanding of the environment. For example, a robot in a corner will tend to reorient itself to face the rest of the room, so it can collect environmental information as it moves along the wall. In the same situation, a passively localized robot may simply slide along with its camera facing the wall.
-
-Finally, a topic of current research is multi-robot localization: how can a team of robots cooperatively localize themselves within an environment?
+Localization is the process of determining the correspondence between a robot's placement and the environment's map coordinates. Like before, a control input $u_t$ gives rise to a robot state $x_t$, which produces measurements $z_t$. The distinction is that this time, the map $m$ influences our measurements and possibly control parameters as well. Different situations thus may call for different filters. This influence is shown in the updated Bayes network (Hidden Markov Model) for robot localization in Figure \ref{fig:HMM_with_map}. Similarly, the influence of the map (door locations) can be seen in the measurement model $p(z \mid x)$ in Figures \ref{fig:Histogram_belief},
+\ref{fig:Particle_filter}b, and \ref{fig:Particle_filter}d.
 
 %\FloatBarrier
 \begin{figure}[H]
@@ -524,10 +653,36 @@ Finally, a topic of current research is multi-robot localization: how can a team
 \end{figure}
 %\FloatBarrier
 
+\subsection{A Taxonomy of Localization Problems}
+    \subsubsection{Local vs Global Localization}
+    The type of localization algorithm used is heavily depending on the information available at initialization and during a robot's operation.
+    
+    In \textit{position tracking}, the initial pose of the robot is known with certainty. This approach assumes that as the robot moves in its environment the pose error remains relatively small and concentrated near the robot's true pose. The EKF works well for this problem because it approximates the error using a unimodal (i.e. Gaussian) distribution.
+    
+    On the other hand, \textit{global localization} assumes the initial pose is unknown. In this scenario, the belief distribution is inherently multi-modal as the robot attempts to localize itself. In this case, non-parametric filters like histogram or particle filters are preferable. 
+    
+    A final case is that of the \textit{kidnapped robot}. In this case the initial pose is unknown and the robot can be "kidnapped" during its operation, i.e. a discontinuity may exist in its state $\mathbf{x}(t)$. This models the situation when a filter diverges to a significant enough degree that it must be reset. Hence, our localization algorithm should be capable of restarting from a different point/orientation in space. The kidnapped robot localization problem is best addressed with non-parametric, multi-hypothesis filters.
+    
+    \subsubsection{Static vs Dynamic Environments}
+    Environmental changes are another important consideration in mobile robot localization. A \textit{static} environment assumes that the robot is the only object that moves. In contrast, a \textit{dynamic} environmental model allows other objects, such as people, to move as well. This problem is usually addressed by augmenting the state vector to include the movement of dynamic entities, or by filtering the sensor data to remove the effects of environment dynamics.
+    
+    \subsubsection{Passive vs Active Approaches}
+    Localization problems can be further split into passive and active depending on whether the localization algorithm can control the motion of the robot. \textit{Passive} localization assumes that a single module takes measurements, and the robot's motion is unrelated to its localization process. 
+    
+    A more sophisticated approach is \textit{active} localization, where the robot's movement is aimed (at least partly) toward improving its understanding of the environment. For example, a robot in a corner will tend to reorient itself to face the rest of the room, so it can collect environmental information as it moves along the wall. In the same situation, a passively localized robot may simply slide along with its camera facing the wall. However, since active approaches require control over the robot, they tend to be insufficient in practice. They are often combined with passive techniques that operate when the robot is performing tasks other than localization. 
+    
+    \subsubsection{Single Robot vs Multi-Robot}
+    A final consideration in the localization problem is the number of robots involved. \textit{Single-robot localization} is the most commonly studied and utilized approach. Only a single robot is used in this scheme, and this approach offers the advantage of having all data collected in a single platform.
+    
+    \textit{Multi-robot localization} occurs when a team of robots share information in such a way that one robot's belief can be used to influence another robot's belief if the relative location between robots is known. 
+
+
+
+
 \printbibliography
 
 \subsubsection*{Contributors}
-Winter 2019: [Your Names Here] \\
+Winter 2019: Spencer Diehl, Jennifer Lin, Georgia Murray, Akshay Rajagopal, Mimi Su, JQ Zhang \\
 Winter 2018: Arthur Binstein, Anqi Fu, Trevor Halsted, Scott Hemley, Alexander Hobbs, Jialong Wang
 
 \end{document}
